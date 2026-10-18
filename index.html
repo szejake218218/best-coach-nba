@@ -782,7 +782,7 @@ function chemistryDetail(){
   const starF = clamp(1 - unhappyStars*0.02, 0.90, 1);
 
   const feuds = (state.feuds||[]).filter(f=>P(f.a)&&P(f.b)).length;
-  const feudF = clamp(1 - feuds*0.035, 0.86, 1);
+  const feudF = clamp(1 - feuds*0.05, 0.80, 1);
   let total = clamp(pos*moodF*gelF*spaceF*starF*feudF, 0.60, 1.02);
   if(hasPerk('chem')) total = clamp(total*1.03, 0, 1.03);
   return {pos, moodF, gelF, spaceF, starF, feudF, feuds, total, moodAvg, stSh3, newGuys, unhappyStars};
@@ -828,10 +828,14 @@ function chemModal(){
     </div>
     <button class="btn gold w-full mt-3" data-act="close">閂埋</button>`);
 }
+function inFeud(p){
+  return (state.feuds||[]).some(f=>f.a===p.id || f.b===p.id);
+}
 function effOvr(p){
   const moodMul = 0.97 + ((p.mood==null?70:p.mood)/100)*0.06;
   const hurtMul = (p.hurtPlay && p.out>0) ? 0.90 : 1;
-  return p.ovr * (0.86 + 0.14*(p.stam/100)) * moodMul * hurtMul;
+  const feudMul = inFeud(p) ? 0.97 : 1;
+  return p.ovr * (0.86 + 0.14*(p.stam/100)) * moodMul * hurtMul * feudMul;
 }
 function teamRating(){
   const act = activePlayers().filter(p=>p.min>0);
@@ -1002,7 +1006,7 @@ function hubHTML(){
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
         <div>
           <div style="font-size:11px;font-weight:900;color:#FBBF24">😤 ${esc(a.l)} 同 ${esc(b.l)} 唔和</div>
-          <div style="font-size:9.5px;color:#93A6BE;margin-top:2px">已經 ${f.weeks} 週 · 化學反應 -3.5% · 撳入去處理</div>
+          <div style="font-size:9.5px;color:#93A6BE;margin-top:2px">已經 ${f.weeks} 週 · 化學 -5% · 兩人心情 -3／週 · 撳入去處理</div>
         </div>
         <div style="font-size:14px;color:#5E6D83">›</div>
       </div>
@@ -1399,7 +1403,12 @@ function offCourtPhase(ev){
   // 更衣室不和
   if(state.week > 4){
     state.feuds = (state.feuds||[]).filter(f=>P(f.a) && P(f.b));
-    state.feuds.forEach(f=>f.weeks++);
+    state.feuds.forEach(f=>{
+      f.weeks++;
+      const pa = P(f.a), pb = P(f.b);
+      if(pa) pa.mood = clamp(pa.mood - 3, 0, 100);
+      if(pb) pb.mood = clamp(pb.mood - 3, 0, 100);
+    });
     if(state.feuds.length < 2 && Math.random() < 0.10){
       const act = activePlayers().filter(p=>p.min>=18);
       if(act.length >= 2){
@@ -1424,7 +1433,7 @@ function feudSheet(i){
   openSheet(`
     <div class="sheet-head">
       <div><div class="sheet-kicker">LOCKER ROOM</div><div class="sheet-title">更衣室不和</div>
-        <div style="font-size:10px;color:#6F7F96;margin-top:3px">已經嗌咗 ${f.weeks} 週 · 化學反應 -3.5%</div>
+        <div style="font-size:10px;color:#6F7F96;margin-top:3px">已經嗌咗 ${f.weeks} 週 · 化學 -5% · 兩人心情 -3／週 · 場上表現 -3%</div>
       </div>
       <button class="xbtn" data-act="close">×</button>
     </div>
@@ -1432,15 +1441,15 @@ function feudSheet(i){
       <div style="font-size:13px;font-weight:900">${esc(a.name)} <span style="color:#5E6D83">vs</span> ${esc(b.name)}</div>
       <div style="font-size:10px;color:#93A6BE;margin-top:4px">兩個都覺得自己先係大佬，你唔處理就會蔓延全隊。</div>
     </div>
-    <button class="choice" data-act="feud" data-i="${i}" data-k="a">
+    <button class="choice" data-act="resolveFeud" data-i="${i}" data-k="a">
       <em>${a.mood>=b.mood?'+8':'-12'}</em><b>企喺 ${esc(a.l)} 嗰邊</b>
       <span>${esc(a.l)} 心情升，${esc(b.l)} 心情大跌，但件事即刻平息</span>
     </button>
-    <button class="choice" data-act="feud" data-i="${i}" data-k="b">
+    <button class="choice" data-act="resolveFeud" data-i="${i}" data-k="b">
       <em>${b.mood>=a.mood?'+8':'-12'}</em><b>企喺 ${esc(b.l)} 嗰邊</b>
       <span>${esc(b.l)} 心情升，${esc(a.l)} 心情大跌，但件事即刻平息</span>
     </button>
-    <button class="choice" data-act="feud" data-i="${i}" data-k="peace">
+    <button class="choice" data-act="resolveFeud" data-i="${i}" data-k="peace">
       <em>60%</em><b>叫入會議室調停</b>
       <span>士氣 -4，六成機會和好；失敗就再拖一週</span>
     </button>
