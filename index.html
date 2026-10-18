@@ -734,7 +734,7 @@ function P(id){
   return null;
 }
 const starters = () => state.slots.slice(0,5).map(P).filter(Boolean);
-const benchPlayers = () => state.slots.slice(5,10).map(P).filter(Boolean);
+const benchPlayers = () => state.slots.slice(5).map(P).filter(Boolean);
 const activePlayers = () => state.roster.filter(p=>(p.out<=0 || p.hurtPlay) && !p.holdout);
 const totalMinutes = () => sum(activePlayers(), p=>p.min);
 const maxPossible = () => activePlayers().length*48;
@@ -1090,7 +1090,11 @@ function hubHTML(){
     return slotHTML(p, i, POS_ORDER[i]);
   }).join('')}</div>`;
 
-  h += `<div class="bench">${state.slots.slice(5,10).map((id,i)=>{
+  const benchIds = state.slots.slice(5);
+  if(benchIds.length > 5){
+    h += `<div style="font-size:9px;color:#5E6D83;margin-top:8px">後備 ${benchIds.length} 人（撳住可以拖去正選／互換）</div>`;
+  }
+  h += `<div class="bench">${benchIds.map((id,i)=>{
     const p = P(id); if(!p) return '';
     return benchHTML(p, i+5);
   }).join('')}</div>`;
@@ -2022,7 +2026,7 @@ function autoByStarters(){
   if(!act.length) return;
   act.forEach(p=>p.min = 0);
   const st = state.slots.slice(0,5).map(P).filter(p=>p && p.out<=0);
-  const bn = state.slots.slice(5,10).map(P).filter(p=>p && p.out<=0);
+  const bn = state.slots.slice(5).map(P).filter(p=>p && p.out<=0);
   const targets = [32, 30, 28, 26, 24];
   st.forEach((p,i)=>{ p.min = Math.min(p.age>=30 ? 26 : 34, targets[i] || 24); });
   let total = totalMinutes();
