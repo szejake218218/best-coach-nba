@@ -3879,7 +3879,7 @@ function startPlayoffs(){
     return;
   }
   state.phase = 'playoff';
-  state.roster.forEach(p=>{ p.stam = clamp(p.stam+25,0,100); if(p.out<=0 && p.min===0) p.min = 16; });
+  state.roster.forEach(p=>{ p.stam = clamp(p.stam+14,0,100); if(p.out<=0 && p.min===0) p.min = 16; });
   rebalanceMinutes();
   const order = [[0,7],[3,4],[2,5],[1,6]];
   state.playoffs = {
@@ -3918,13 +3918,17 @@ function simPlayoffGame(){
   if(t !== 240 && maxPossible()>=240){ toast(`❌ 輪換係 ${t} 分鐘（要 240）`, 'bad'); return; }
 
   const meIsA = s.a.me;
-  const oppStr = (meIsA ? s.b.str : s.a.str) - 1.5;
   const gameNo = s.wa + s.wb + 1;
+  // 季後賽對手：全部係強隊（+1.0），而且每打一場就適應你多啲（最多 +2.8）
+  const adapt = Math.min(1.5, (s.wa + s.wb) * 0.4);
+  const myW0 = meIsA ? s.wa : s.wb, opW0 = meIsA ? s.wb : s.wa;
+  const desperate = opW0 >= 2 && opW0 > myW0 ? 0.25 : 0;   // 對手落後／有危機時搏命
+  const oppStr = (meIsA ? s.b.str : s.a.str) - 0.6 + adapt + desperate;
   const home = [1,2,5,7].includes(gameNo) ? meIsA : !meIsA;
 
   state.roster.forEach(p=>{
     if(p.out>0){ p.out--; if(p.out===0) p.min=0; return; }
-    p.stam = clamp(p.stam+5,0,100);
+    p.stam = clamp(p.stam+7,0,100);
   });
   const newInj = [];
   state.roster.forEach(p=>{
@@ -3935,10 +3939,10 @@ function simPlayoffGame(){
   });
   if(newInj.length || totalMinutes()!==240) rebalanceMinutes();
 
-  const myRate = teamRating() + (home?1.4:-1.4);
+  const myRate = teamRating() + (home?1.8:-1.8);
   const diff = myRate - oppStr;
-  let a = Math.round(101 + diff*1.0 + rnd(-14,14));
-  let b = Math.round(101 - diff*1.0 + rnd(-14,14));
+  let a = Math.round(101 + diff*1.0 + rnd(-15,15));
+  let b = Math.round(101 - diff*1.0 + rnd(-15,15));
   a = clamp(a,76,152); b = clamp(b,76,152);
   let ot = false;
   if(a===b){ ot=true; a+=ri(2,5); }
@@ -3959,6 +3963,7 @@ function simPlayoffGame(){
     <div class="sheet-kicker">${state.playoffs.roundName} · GAME ${gameNo}</div>
     <div style="font-size:13px;font-weight:900;margin-top:6px;color:${win?'#4ADE80':'#F87171'}">${win?'WIN':'LOSE'} <span class="num" style="font-size:26px;color:#E9EFF8">${a}-${b}</span></div>
     <div style="font-size:10px;color:#93A6BE;margin-top:3px">${home?'主場':'作客'} vs ${esc(meIsA?s.b.name:s.a.name)}${ot?' · 加時':''}</div>
+    ${adapt>0?`<div style="font-size:9px;color:#FBBF24;margin-top:2px">⚠️ 對手已經適應你嘅打法（+${adapt.toFixed(1)} 強度）</div>`:''}
     <div style="font-size:11.5px;margin-top:8px">系列賽 <b class="num" style="color:var(--gold2);font-size:15px">${myW}-${opW}</b></div>
   </div>`;
   h += `<div style="background:#0B111A;border:1px solid #182130;border-radius:10px;padding:9px 10px;margin-top:10px">
@@ -4002,6 +4007,8 @@ function advanceAfterSeries(){
   for(let i=0;i<winners.length;i+=2){ if(winners[i] && winners[i+1]) next.push(makeSeries(winners[i], winners[i+1])); }
   po.round++;
   po.roundName = confCN(po.conf) + (ROUND_NAMES[po.round] || '季後賽');
+  // 系列賽之間有幾日休息
+  state.roster.forEach(p=>{ p.stam = clamp(p.stam+14,0,100); });
   po.series = next;
   po.series.forEach(s=>{ if(!(s.a.me||s.b.me)) simSeriesInstant(s); });
   render();
