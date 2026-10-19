@@ -651,7 +651,7 @@ function newState(teamName, abbr){
     direction: 'win',
     tradeException: 15,
     feuds: [],
-    legacy: {xp: 120, perks: [], seasons: 0, titles: 0, wins: 0},
+    legacy: {xp: 120, perks: {}, seasons: 0, titles: 0, wins: 0, totalXp: 120},
     lastPlan: null,
     closing: [],
     training:'balanced',
@@ -784,7 +784,8 @@ function chemistryDetail(){
   const feuds = (state.feuds||[]).filter(f=>P(f.a)&&P(f.b)).length;
   const feudF = clamp(1 - feuds*0.05, 0.80, 1);
   let total = clamp(pos*moodF*gelF*spaceF*starF*feudF, 0.60, 1.02);
-  if(hasPerk('chem')) total = clamp(total*1.03, 0, 1.03);
+  const chemLv = perkLv('chem');
+  if(chemLv) total = clamp(total*(1 + [0,0.03,0.05,0.07][chemLv]), 0, 1.07);
   return {pos, moodF, gelF, spaceF, starF, feudF, feuds, total, moodAvg, stSh3, newGuys, unhappyStars};
 }
 function chemistry(){ return chemistryDetail().total; }
@@ -1037,8 +1038,8 @@ function hubHTML(){
   h += `<button class="card" data-act="coach" style="width:100%;text-align:left;padding:9px 12px;margin-bottom:9px;font-family:inherit;cursor:pointer;display:flex;align-items:center;gap:9px">
     <div style="font-size:16px">🎖</div>
     <div style="flex:1;min-width:0">
-      <div style="font-size:10.5px;font-weight:800">教練等級 · ${Math.round(L.xp)} XP</div>
-      <div style="font-size:9px;color:#6F7F96">技能 ${L.perks.length}/5 · 第 ${L.seasons} 季</div>
+      <div style="font-size:10.5px;font-weight:800">教練 Lv.${coachLevel()} · ${coachLevelName()}</div>
+      <div style="font-size:9px;color:#6F7F96">${Math.round(L.xp)} XP 可用 · 第 ${L.seasons} 季</div>
     </div>
     <div style="font-size:13px;color:#5E6D83">›</div>
   </button>`;
@@ -1341,17 +1342,51 @@ function setDirection(v){
 }
 
 const PERKS = {
-  timeout:   {label:'戰術暫停', cost:90,  emo:'⏱',  desc:'每場多 1 個暫停（共 4 個）'},
-  scout:     {label:'高級球探', cost:90,  emo:'🔍', desc:'賽前多睇對手一個弱點'},
-  trainer:   {label:'體能教練', cost:110, emo:'🏋️', desc:'每週訓練效果 +60%'},
-  chem:      {label:'心理教練', cost:120, emo:'🧠', desc:'化學反應永久 +3%'},
-  negotiator:{label:'談判專家', cost:110, emo:'🤝', desc:'續約叫價 -8%'}
+  timeout:   {label:'戰術暫停', emo:'⏱',  desc:['每場多 1 個暫停','多 2 個','多 3 個（共 6 個）'], cost:[90,170,280]},
+  scout:     {label:'高級球探', emo:'🔍', desc:['睇 1 個弱點','睇 2 個弱點','睇晒所有弱點'], cost:[90,170,280]},
+  trainer:   {label:'體能教練', emo:'🏋️', desc:['訓練效果 +60%','+120%','+180%'], cost:[110,190,300]},
+  chem:      {label:'心理教練', emo:'🧠', desc:['化學反應 +3%','+5%','+7%'], cost:[120,200,320]},
+  negotiator:{label:'談判專家', emo:'🤝', desc:['續約叫價 -8%','-12%','-16%'], cost:[110,190,300]}
 };
-function hasPerk(k){ return !!(state.legacy && state.legacy.perks && state.legacy.perks.includes(k)); }
-function legacy(){ if(!state.legacy) state.legacy = {xp:0, perks:[], seasons:0, titles:0, wins:0}; if(!state.legacy.perks) state.legacy.perks = []; return state.legacy; }
+const MAX_PERK_LV = 3;
+const COACH_LEVELS = [0, 300, 700, 1200, 1800, 2600, 3600, 4800];
+const COACH_NAMES = ['見習教練','助教','主教練','名帥','傳奇教練','殿堂級','神話級','祖師爺'];
+
+function legacy(){
+  if(!state.legacy) state.legacy = {xp:0, perks:{}, seasons:0, titles:0, wins:0, totalXp:0};
+  const L = state.legacy;
+  // 舊存檔：perks 係 array
+  if(Array.isArray(L.perks)){
+    const arr = L.perks.slice();
+    L.perks = {};
+    arr.forEach(k=>{ L.perks[k] = 1; });
+    L.totalXp = Math.max(L.totalXp||0, (L.xp||0) + arr.length*110);
+  }
+  if(!L.perks || typeof L.perks !== 'object') L.perks = {};
+  if(L.totalXp == null) L.totalXp = L.xp || 0;
+  return L;
+}
+function perkLv(k){
+  const L = legacy();
+  if(Array.isArray(L.perks)) return L.perks.includes(k) ? 1 : 0;
+  return L.perks[k] || 0;
+}
+function hasPerk(k){ return perkLv(k) > 0; }
+function coachLevel(){
+  const t = legacy().totalXp || 0;
+  let i = 0;
+  while(i+1 < COACH_LEVELS.length && t >= COACH_LEVELS[i+1]) i++;
+  return i+1;
+}
+function coachLevelName(){ return COACH_NAMES[Math.min(COACH_NAMES.length-1, coachLevel()-1)]; }
+function coachXpMul(){ return 1 + 0.06*(coachLevel()-1); }
 
 function coachSheet(){
   const L = legacy();
+  const lv = coachLevel();
+  const cur = COACH_LEVELS[lv-1] || 0;
+  const next = COACH_LEVELS[lv] != null ? COACH_LEVELS[lv] : null;
+  const pct = next ? Math.min(100, ((L.totalXp - cur)/(next-cur))*100) : 100;
   openSheet(`
     <div class="sheet-head">
       <div><div class="sheet-kicker">COACH PROFILE</div><div class="sheet-title">教練檔案</div>
@@ -1359,33 +1394,47 @@ function coachSheet(){
       </div>
       <button class="xbtn" data-act="close">×</button>
     </div>
+
     <div style="background:#0B111A;border:1px solid #182130;border-radius:12px;padding:12px;margin-top:12px;text-align:center">
-      <div style="font-size:9px;letter-spacing:.2em;color:#5E6D83;font-weight:900">教練 XP</div>
-      <div class="num" style="font-size:32px;font-weight:800;color:#FFD166">${Math.round(L.xp)}</div>
-      <div style="font-size:9px;color:#6F7F96">每季按勝場同冠軍累積 · 買技能會扣 XP</div>
+      <div style="font-size:9px;letter-spacing:.2em;color:#5E6D83;font-weight:900">等級 ${lv} · ${coachLevelName()}</div>
+      <div class="num" style="font-size:30px;font-weight:800;color:#FFD166;margin-top:2px">${Math.round(L.xp)} <span style="font-size:13px;color:#6F7F96">XP 可用</span></div>
+      <div style="height:6px;border-radius:99px;background:#16202E;overflow:hidden;margin:8px 0 4px">
+        <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#F59E0B,#FFD166);transition:width .3s"></div>
+      </div>
+      <div style="font-size:9px;color:#6F7F96">${next?`再賺 ${Math.max(0, next-L.totalXp)} XP 升 Lv.${lv+1} · `:''}生涯總 XP ${Math.round(L.totalXp)}</div>
+      <div style="font-size:9px;color:#5E6D83;margin-top:3px">每升一級：之後每季 XP +6%（而家 +${Math.round((coachXpMul()-1)*100)}%）</div>
     </div>
-    <div style="font-size:9px;letter-spacing:.2em;color:#5E6D83;font-weight:900;margin:14px 0 7px">技能樹</div>
+
+    <div style="font-size:9px;letter-spacing:.2em;color:#5E6D83;font-weight:900;margin:14px 0 7px">技能樹（每個可升 3 級）</div>
     ${Object.entries(PERKS).map(([k,v])=>{
-      const owned = hasPerk(k);
-      const can = !owned && L.xp >= v.cost;
-      return `<div class="trow2" style="align-items:flex-start;${owned?'border-color:rgba(74,222,128,.4)':''}">
+      const lvl = perkLv(k);
+      const maxed = lvl >= MAX_PERK_LV;
+      const cost = maxed ? 0 : v.cost[lvl];
+      const can = !maxed && L.xp >= cost;
+      return `<div class="trow2" style="align-items:flex-start;${lvl>0?'border-color:rgba(74,222,128,.35)':''}">
         <div style="font-size:16px;width:22px">${v.emo}</div>
         <div style="flex:1;min-width:0">
-          <div style="font-size:11.5px;font-weight:800">${v.label}${owned?' ✓':''}</div>
-          <div style="font-size:9.5px;color:#93A6BE;margin-top:1px">${v.desc}</div>
+          <div style="font-size:11.5px;font-weight:800">${v.label} <span style="color:#FFD166;font-size:10px">${'●'.repeat(lvl)}${'○'.repeat(MAX_PERK_LV-lvl)}</span></div>
+          <div style="font-size:9.5px;color:#93A6BE;margin-top:1px">${lvl>0 ? '而家：'+v.desc[lvl-1] : '解鎖後：'+v.desc[0]}${!maxed?` · 下一級：${v.desc[lvl]}`:''}</div>
         </div>
-        <button class="btn ${owned?'':'gold'}" style="${owned||!can?'opacity:.4;padding:6px 9px;font-size:10px':'padding:6px 9px;font-size:10px'}" ${owned||!can?'disabled':''} data-act="perk" data-k="${k}">${owned?'已解鎖':v.cost+' XP'}</button>
+        <button class="btn ${can?'gold':''}" style="${can?'padding:6px 9px;font-size:10px':'opacity:.4;padding:6px 9px;font-size:10px'}" ${can?'':'disabled'} data-act="perk" data-k="${k}">${maxed?'滿級':(can?cost+' XP':'唔夠 XP')}</button>
       </div>`;
     }).join('')}
-    <div style="font-size:9.5px;color:#5E6D83;margin-top:10px;line-height:1.6">技能會跟住你嘅執教生涯，就算換季都唔會消失。</div>
+
+    <div style="font-size:9.5px;color:#5E6D83;margin-top:10px;line-height:1.6">技能同等級跟住你嘅執教生涯，換季都唔會消失。</div>
   `);
 }
 function buyPerk(k){
   const v = PERKS[k]; const L = legacy();
-  if(!v || hasPerk(k) || L.xp < v.cost) return;
-  L.xp -= v.cost; L.perks.push(k);
+  if(!v) return;
+  const lvl = perkLv(k);
+  if(lvl >= MAX_PERK_LV){ toast('已經滿級', 'bad'); return; }
+  const cost = v.cost[lvl];
+  if(L.xp < cost){ toast(`XP 唔夠（要 ${cost}）`, 'bad'); return; }
+  L.xp -= cost;
+  L.perks[k] = lvl + 1;
   save(); render(); coachSheet();
-  toast(`🎖 解鎖：${v.label}`, 'good');
+  toast(`🎖 ${v.label} 升到 Lv.${lvl+1}`, 'good');
 }
 
 function offCourtPhase(ev){
@@ -2314,11 +2363,12 @@ function planExplain(oppName){
   return lines.slice(0,4);
 }
 
-function scoutWeak(name){
+function scoutWeak(name, n){
   const prof = teamProfile(name);
   const cats = [['三分', prof.sh3], ['防守', prof.dfn], ['速度', prof.spd], ['內線', prof.ins]];
   cats.sort((a,b)=>a[1]-b[1]);
-  return `弱點：${cats[0][0]}（${Math.round(cats[0][1])}）`;
+  const k = Math.max(1, Math.min(4, n || 1));
+  return cats.slice(0, k).map(c=>`${c[0]} ${Math.round(c[1])}`).join(' · ');
 }
 
 function prepSheet(){
@@ -2349,7 +2399,7 @@ function prepSheet(){
       <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">
         ${prof.tags.map(t=>`<span style="font-size:8.5px;background:#131C29;border:1px solid #1E2A3B;border-radius:5px;padding:1px 5px;color:#93A6BE">${t}</span>`).join('')}
         <span style="font-size:8.5px;color:#5E6D83">強度 ${f.opp.str}</span>
-        ${hasPerk('scout')?`<span style="font-size:8.5px;color:#7FF3E4">🔍 ${scoutWeak(f.opp.name)}</span>`:''}
+        ${perkLv('scout')?`<span style="font-size:8.5px;color:#7FF3E4">🔍 弱點：${scoutWeak(f.opp.name, perkLv('scout'))}</span>`:''}
       </div>
     </div>`;
   });
@@ -2454,7 +2504,7 @@ function runNextGame(){
   const pw = state.pendingWeek;
   if(!pw) return;
   while(pw.i < pw.fixtures.length){
-    pw.toLeft = 3 + (hasPerk('timeout')?1:0);
+    pw.toLeft = 3 + perkLv('timeout');
     const g = playGame(pw.fixtures[pw.i], {toLeft: pw.toLeft});
     if(g.pendingHalf){
       pw.i++;
@@ -2690,15 +2740,15 @@ function applyTraining(ev){
   const act = activePlayers();
   let changed = new Set();
   if(t==='fitness'){
-    act.forEach(p=>{ p.stam = clamp(p.stam+(hasPerk('trainer')?11:7),0,100); });
+    act.forEach(p=>{ p.stam = clamp(p.stam+(7 + 4*perkLv('trainer')),0,100); });
     if(ev) ev.notes.push('體能訓練：全隊賽前回氣 +7%');
   }else if(t==='shooting'){
-    const _tc = hasPerk('trainer')?0.48:0.30;
+    const _tc = 0.30*(1 + 0.6*perkLv('trainer'));
     act.forEach(p=>{ if(Math.random() < _tc*trainAgeMul(p)){ p.attrs.sh3 = Math.min(99,p.attrs.sh3+1); changed.add(p.id); } });
     act.filter(p=>p.age<=23).forEach(p=>{ p.xp += 5; });
     if(ev) ev.notes.push('投籃訓練：' + changed.size + ' 名球員三分 +1');
   }else if(t==='defense'){
-    const _td = hasPerk('trainer')?0.48:0.30;
+    const _td = 0.30*(1 + 0.6*perkLv('trainer'));
     act.forEach(p=>{ if(Math.random() < _td*trainAgeMul(p)){ p.attrs.dfn = Math.min(99,p.attrs.dfn+1); changed.add(p.id); } });
     state.morale = clamp(state.morale+2,0,100);
     if(ev) ev.notes.push('防守訓練：' + changed.size + ' 名球員防守 +1');
@@ -3774,7 +3824,7 @@ function enterContracts(){
     p.years = (p.years==null?1:p.years) - 1;
     p.expiring = p.years <= 0;
     if(p.expiring){
-      const base = (p.salary || salaryFor(p.ovr, p.age)) * 1.08 * (hasPerk('negotiator')?0.92:1);
+      const base = (p.salary || salaryFor(p.ovr, p.age)) * 1.08 * (1 - 0.04*(perkLv('negotiator')+ (perkLv('negotiator')?1:0)));
       const moodMul = 1 + clamp((60 - (p.mood==null?70:p.mood))/160, -0.06, 0.20);
       p.ask = Math.round(base * moodMul * 10) / 10;
       p.negoFails = 0;
@@ -4239,7 +4289,9 @@ function startNewSeason(){
   const L = legacy();
   const prevW = myTeam().w || 0;
   const _won = !!state.wonTitle;
-  L.xp += Math.max(0, prevW)*6 + (_won?150:0) + (state.phase==='playoff'||_won?25:0);
+  const _gain = Math.round((Math.max(0, prevW)*6 + (_won?150:0) + (state.phase==='playoff'||_won?25:0)) * coachXpMul());
+  L.xp += _gain;
+  L.totalXp = (L.totalXp || 0) + _gain;
   L.wins += Math.max(0, prevW);
   L.seasons += 1;
   if(_won) L.titles += 1;
