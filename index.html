@@ -673,7 +673,7 @@ function newState(teamName, abbr){
   };
   const tn = st.team;
   st.market = buildLeagueMarket(t.ab);
-  st.picks = makePicks([...NBA_TEAMS.map(x=>x.n), tn]);
+  st.picks = makePicks([...new Set([...NBA_TEAMS.map(x=>x.n), tn])]);
   return st;
 }
 function makeStandings(teamName){
@@ -3169,19 +3169,21 @@ function tradeModal(){
   const teams = Object.keys(state.market || {});
   if(!teams.length){ toast('聯盟資料未載入', 'bad'); return; }
   if(!tradeUI || !tradeUI.team || !state.market[tradeUI.team]){
-    tradeUI = {team: teams[0], targets:[], mine:[], picks:[]};
+    tradeUI = {team: teams[0], targets:[], mine:[], picks:[], theirPicks:[]};
   }
   if(!state.trade.offers || !state.trade.offers.length){
     state.trade.offers = generateOffers();
   }
   if(!Array.isArray(tradeUI.targets)) tradeUI.targets = tradeUI.target ? [tradeUI.target] : [];
   if(!Array.isArray(tradeUI.mine)) tradeUI.mine = tradeUI.mine ? [tradeUI.mine] : [];
+  if(!Array.isArray(tradeUI.theirPicks)) tradeUI.theirPicks = [];
   const them = state.market[tradeUI.team] || [];
   const targets = tradeUI.targets.map(id=>them.find(p=>p.id===id)).filter(Boolean);
   const mineP = tradeUI.mine.map(P).filter(Boolean);
   const picks = tradeUI.picks.map(id=>state.picks.find(x=>x.id===id)).filter(Boolean);
   const vMine = sum(mineP, p=>valueOf(p)*starPremium(p)) + sum(picks, pickValue);
-  const vTheirs = sum(targets, p=>valueOf(p)*starPremium(p));   // 兩邊都用球星溢價
+  const theirPicks = (tradeUI.theirPicks||[]).map(id=>state.picks.find(x=>x.id===id)).filter(Boolean);
+  const vTheirs = sum(targets, p=>valueOf(p)*starPremium(p)) + sum(theirPicks, pickValue);   // 兩邊都用球星溢價
   const need = targets.length ? tradeNeed(vTheirs, targets.length, mineP.length, targets, tradeUI.team) : 0;
   const salOut = sum(mineP, salaryOfT);
   const salIn = sum(targets, salaryOfT);
@@ -3271,6 +3273,12 @@ function tradeModal(){
     ${mp.length ? mp.map(pk=>`<button class="pchip ${tradeUI.picks.includes(pk.id)?'on':''}" data-act="togglePick" data-id="${pk.id}">${pickLabel(pk)} · 值${pickValue(pk)}</button>`).join('') : '<span style="font-size:10px;color:#5E6D83">冇選秀權</span>'}
   </div>`;
 
+  const theirPkAll = picksOf(tradeUI.team).sort((a,b)=>a.year-b.year || a.round-b.round);
+  h += `<div style="font-size:9px;color:#6F7F96;margin:8px 0 4px">＋ 要求對方加籤（可多選）</div>
+  <div style="display:flex;gap:5px;flex-wrap:wrap">
+    ${theirPkAll.length ? theirPkAll.map(pk=>`<button class="pchip ${(tradeUI.theirPicks||[]).includes(pk.id)?'on':''}" data-act="toggleTheirPick" data-id="${pk.id}">${pickLabel(pk)} · 值${pickValue(pk)}</button>`).join('') : '<span style="font-size:10px;color:#5E6D83">對方冇選秀權</span>'}
+  </div>`;
+
   h += `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;background:#0B111A;border:1px solid #182130;border-radius:11px;padding:9px 11px">
     <div><div style="font-size:9px;color:#6F7F96">你送出</div><div class="num" style="font-size:17px;font-weight:800">${Math.round(vMine)}</div></div>
     <div style="font-size:10px;color:${verdict.c};font-weight:800;text-align:center;flex:1">${verdict.t}${need?`<div style="font-size:8.5px;color:#5E6D83;font-weight:700;margin-top:2px">對方底價 ≈ ${Math.round(need)}</div>`:''}</div>
@@ -3335,7 +3343,7 @@ function tradeModal(){
   openSheet(h);
 }
 
-function doTrade(outIds, inIds, teamName, pickIds){
+function doTrade(outIds, inIds, teamName, pickIds, theirPickIds){
   const ins = (inIds||[]).map(P).filter(Boolean);
   if(!ins.length) return false;
   const outs = (outIds||[]).map(P).filter(Boolean);
@@ -3353,6 +3361,10 @@ function doTrade(outIds, inIds, teamName, pickIds){
   (pickIds||[]).forEach(id=>{
     const pk = state.picks.find(x=>x.id===id);
     if(pk) pk.owner = teamName;
+  });
+  (theirPickIds||[]).forEach(id=>{
+    const pk = state.picks.find(x=>x.id===id);
+    if(pk) pk.owner = state.team;   // 對方嘅籤轉俾我
   });
   state.trade.count = (state.trade.count||0) + 1;
   // 交易特例：用咗就扣，送多過收就儲返（上限 40M）
@@ -3373,43 +3385,44 @@ function autoBuildOffer(){
   const them = state.market[tradeUI.team] || [];
   const targets = tradeUI.targets.map(id=>them.find(p=>p.id===id)).filter(Boolean);
   if(!targets.length){ toast('先揀你想換邊個', 'bad'); return; }
-  const vTheirs = sum(targets, p=>valueOf(p)*starPremium(p));
+  const theirPk = (tradeUI.theirPicks||[]).map(id=>state.picks.find(x=>x.id===id)).filter(Boolean);
+  const vTheirs = sum(targets, p=>valueOf(p)*starPremium(p)) + sum(theirPk, pickValue);
   const need = tradeNeed(vTheirs, targets.length, 1, targets, tradeUI.team);
   const salIn = sum(targets, salaryOfT);
-  const pool = [...state.roster].sort((a,b)=>(valueOf(b)*starPremium(b))-(valueOf(a)*starPremium(a)));
-  let mine = [];
-  for(const p of pool){
-    if(mine.length >= 5) break;
-    if(mine.includes(p)) continue;
-    const after = state.roster.length - (mine.length+1) + targets.length;
-    if(after < ROSTER_MIN) continue;
-    mine.push(p);
-    const vM = sum(mine, x=>valueOf(x)*starPremium(x));
-    const sc = tradeSalaryOK(salIn, sum(mine, salaryOfT), payroll());
-    if(vM >= need && sc.ok) break;
+  const bestPick = myPicks().sort((a,b)=>pickValue(b)-pickValue(a))[0];
+  const pool = [...state.roster];
+
+  // 幫你搵「最貼近底價」嘅組合（1–5 人，可加自己一個籤）
+  let best = null;
+  const test = (arr, usePick)=>{
+    const v = sum(arr, p=>valueOf(p)*starPremium(p)) + (usePick && bestPick ? pickValue(bestPick) : 0);
+    if(v < need) return;
+    const sc = tradeSalaryOK(salIn, sum(arr, salaryOfT), payroll());
+    if(!sc.ok) return;
+    if(state.roster.length - arr.length + targets.length < ROSTER_MIN) return;
+    const over = v - need;
+    if(!best || over < best.over) best = {arr:[...arr], usePick, over, v};
+  };
+  const walk = (start, arr)=>{
+    if(arr.length) { test(arr,false); test(arr,true); }
+    if(arr.length >= 5) return;
+    for(let i=start;i<pool.length;i++){ arr.push(pool[i]); walk(i+1, arr); arr.pop(); }
+  };
+  walk(0, []);
+
+  if(!best){
+    // 砌唔到，就照舊塞最多 5 個最強
+    const sorted = [...pool].sort((a,b)=>(valueOf(b)*starPremium(b))-(valueOf(a)*starPremium(a))).slice(0,5);
+    tradeUI.mine = sorted.map(p=>p.id);
+    tradeUI.picks = bestPick ? [bestPick.id] : [];
+    tradeModal();
+    toast('🪄 砌唔到完全符合嘅組合，幫你砌咗個最大包', 'bad');
+    return;
   }
-  // 仲差薪酬就加多個高薪球員
-  let guard = 0;
-  while(mine.length < 5 && guard++ < 6){
-    const sc = tradeSalaryOK(salIn, sum(mine, salaryOfT), payroll());
-    const vM = sum(mine, x=>valueOf(x)*starPremium(x));
-    if(sc.ok && vM >= need) break;
-    const extra = pool.find(x=>!mine.includes(x) && state.roster.length - (mine.length+1) + targets.length >= ROSTER_MIN);
-    if(!extra) break;
-    mine.push(extra);
-  }
-  const vM = sum(mine, x=>valueOf(x)*starPremium(x));
-  if(vM < need){
-    const pk = myPicks().sort((a,b)=>pickValue(b)-pickValue(a))[0];
-    if(pk) tradeUI.picks = [pk.id];
-  } else {
-    tradeUI.picks = [];
-  }
-  tradeUI.mine = mine.map(p=>p.id);
+  tradeUI.mine = best.arr.map(p=>p.id);
+  tradeUI.picks = best.usePick && bestPick ? [bestPick.id] : [];
   tradeModal();
-  const sc2 = tradeSalaryOK(salIn, sum(mine, salaryOfT), payroll());
-  if(vM >= need && sc2.ok) toast(`🪄 砌好：${mine.length} 個球員${tradeUI.picks.length?' + 選秀權':''}`, 'good');
-  else toast('🪄 幫你砌到最接近，仲差少少', 'bad');
+  toast(`🪄 最貼近嘅組合：${best.arr.length} 個球員${best.usePick?' + 1 個籤':''}`, 'good');
 }
 
 function proposeTrade(){
@@ -3432,7 +3445,8 @@ function proposeTrade(){
     return;
   }
   const vMine = sum(mineP, p=>valueOf(p)*starPremium(p)) + sum(picks, pickValue);
-  const vTheirs = sum(targets, p=>valueOf(p)*starPremium(p));
+  const theirPicks = (tradeUI.theirPicks||[]).map(id=>state.picks.find(x=>x.id===id)).filter(Boolean);
+  const vTheirs = sum(targets, p=>valueOf(p)*starPremium(p)) + sum(theirPicks, pickValue);
   const need = tradeNeed(vTheirs, targets.length, mineP.length, targets, tradeUI.team);
 
   // 1) 非賣品
@@ -3454,10 +3468,10 @@ function proposeTrade(){
   }
   // 3) 價值
   if(vMine >= need){
-    const ok = doTrade(mineP.map(p=>p.id), targets.map(p=>p.id), tradeUI.team, picks.map(p=>p.id));
+    const ok = doTrade(mineP.map(p=>p.id), targets.map(p=>p.id), tradeUI.team, picks.map(p=>p.id), theirPicks.map(p=>p.id));
     if(ok){
       toast(`✅ 交易完成：${targets.map(p=>p.l).join('、')} 加盟`, 'good');
-      tradeUI = {team: tradeUI.team, targets:[], mine:[], picks:[]};
+      tradeUI = {team: tradeUI.team, targets:[], mine:[], picks:[], theirPicks:[]};
       render();
       setTimeout(tradeModal, 450);
     }
@@ -4182,6 +4196,7 @@ function showSeasonEnd(madePlayoffs){
       <div style="font-size:24px;font-weight:900;margin-top:5px;color:${madePlayoffs?'#E9EFF8':'#F87171'}">${madePlayoffs?'季後賽出局':'無緣季後賽'}</div>
       <div style="font-size:11.5px;color:#93A6BE;margin-top:6px">常規賽 ${me.w}-${me.l} · ${confCN()} #${rank}</div>
       ${extra}
+      <div style="font-size:9.5px;color:#5E6D83;margin-top:6px">下季開季時，全部球員年齡 +1（33 歲以上會開始退化）</div>
     </div>
     <div class="gamecard" style="margin-top:12px;display:flex;justify-content:space-between;align-items:center">
       <div><div style="font-size:9px;color:#6F7F96">老闆要求</div><div style="font-size:11.5px;font-weight:800;margin-top:2px">${esc(objLabel)}</div></div>
@@ -4286,7 +4301,7 @@ function startNewSeason(){
   state.objective = setObjective();
   fillRoster();
   // 每年新增一批選秀權（兩年之後嘅）
-  const names = [...NBA_TEAMS.map(t=>t.n), state.team];
+  const names = [...new Set([...NBA_TEAMS.map(t=>t.n), state.team])];
   const newYear = state.draftYear + 1;
   if(!state.picks.some(pk=>pk.year===newYear)){
     [1,2].forEach(r=>names.forEach(t=>state.picks.push({id:uid(), year:newYear, round:r, orig:t, owner:t})));
@@ -4392,6 +4407,11 @@ document.addEventListener('click', e=>{
     case 'signFA': signFA(btn.dataset.id); break;
     case 'refreshOffers': state.trade.offers = generateOffers(); save(); tradeModal(); break;
     case 'autoOffer': autoBuildOffer(); break;
+    case 'toggleTheirPick': {
+      const id = btn.dataset.id;
+      tradeUI.theirPicks = (tradeUI.theirPicks||[]).includes(id) ? tradeUI.theirPicks.filter(x=>x!==id) : (tradeUI.theirPicks||[]).concat([id]);
+      tradeModal(); break;
+    }
     case 'tradeConf': tradeUI.conf = btn.dataset.c; tradeModal(); break;
     case 'tutNext': tutorial(tutPage+1); break;
     case 'tutPrev': tutorial(tutPage-1); break;
